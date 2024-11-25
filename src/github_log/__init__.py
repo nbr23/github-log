@@ -60,7 +60,7 @@ def get_pretty_event_type(event):
     return switcher.get(event['type'], event['type'])
 
 def get_prefix(event):
-    branch = event.get('payload').get('ref').split('/')[-1]
+    branch = (event.get('payload', {}).get('ref') or '').split('/')[-1]
     if branch:
         return f"{event['created_at']} {event['actor']['login']}/{get_pretty_event_type(event)}\t{event['repo']['name']}:{branch}"
     return f"{event['created_at']} {event['actor']['login']}/{get_pretty_event_type(event)}\t{event['repo']['name']}"
