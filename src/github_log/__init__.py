@@ -7,48 +7,58 @@ import re
 
 from zoneinfo import ZoneInfo
 
+
 class GitHubAPI:
     def __init__(self, access_token):
         self.access_token = access_token
         self.headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Accept': 'application/vnd.github.v3+json'
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/vnd.github.v3+json",
         }
-    
+
     def get_user_events(self, username, page=1):
-        url = f'https://api.github.com/users/{username}/events'
-        params = {'page': page}
+        url = f"https://api.github.com/users/{username}/events"
+        params = {"page": page}
         response = requests.get(url, headers=self.headers, params=params)
         response.raise_for_status()
         return response.json()
-    
+
     def get_user_events_date(self, username, local_date, events_filter):
         page = 1
         fetch_more = True
 
-
         local_tz = datetime.now().astimezone().tzinfo
-        start_dt = datetime.combine(local_date, datetime.min.time()).replace(tzinfo=local_tz)
-        end_dt = datetime.combine(local_date, datetime.max.time()).replace(tzinfo=local_tz)
+        start_dt = datetime.combine(local_date, datetime.min.time()).replace(
+            tzinfo=local_tz
+        )
+        end_dt = datetime.combine(local_date, datetime.max.time()).replace(
+            tzinfo=local_tz
+        )
 
-        events_filter = [e.lower() for e in events_filter.split(',') if e != '']
+        events_filter = [e.lower() for e in events_filter.split(",") if e != ""]
 
         while fetch_more:
             events = self.get_user_events(username, page)
             for event in events:
-                if events_filter and event['type'].lower() not in events_filter and event['type'].replace('Event', '').lower() not in events_filter:
+                if (
+                    events_filter
+                    and event["type"].lower() not in events_filter
+                    and event["type"].replace("Event", "").lower() not in events_filter
+                ):
                     continue
-                event_dt = datetime.strptime(
-                    event['created_at'], 
-                    '%Y-%m-%dT%H:%M:%SZ'
-                ).replace(tzinfo=ZoneInfo('UTC')).astimezone(local_tz)
-                
-                event['created_at'] = event_dt
+                event_dt = (
+                    datetime.strptime(event["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+                    .replace(tzinfo=ZoneInfo("UTC"))
+                    .astimezone(local_tz)
+                )
+
+                event["created_at"] = event_dt
                 if event_dt < start_dt:
                     fetch_more = False
                 if start_dt <= event_dt <= end_dt:
                     yield event
             page += 1
+
 
 def get_pretty_event_type(event):
     switcher = {
@@ -62,38 +72,59 @@ def get_pretty_event_type(event):
         "PullRequestReviewCommentEvent": "PR Comment",
         "IssueCommentEvent": "Issue Comment",
     }
-    return switcher.get(event['type'], event['type'])
+    return switcher.get(event["type"], event["type"])
+
 
 def get_prefix(event):
-    branch = (event.get('payload', {}).get('ref') or '').split('/')[-1]
+    branch = (event.get("payload", {}).get("ref") or "").split("/")[-1]
     if branch:
         return f"{event['created_at']} {event['actor']['login']}/{get_pretty_event_type(event)}\t{event['repo']['name']}:{branch}"
     return f"{event['created_at']} {event['actor']['login']}/{get_pretty_event_type(event)}\t{event['repo']['name']}"
 
+
 def push_formatter(logLines, event):
-    for commit in event['payload']['commits']:
+    for commit in event["payload"]["commits"]:
         logLines.append(f"{get_prefix(event)} - {commit['message'].replace('\n', ',')}")
 
+
 def pull_request_formatter(logLines, event):
-    logLines.append(f"{get_prefix(event)} -{event['payload']['action']} - {event['payload']['pull_request']['title']}")
+    logLines.append(
+        f"{get_prefix(event)} -{event['payload']['action']} - {event['payload']['pull_request']['title']}"
+    )
+
 
 def create_formatter(logLines, event):
-    if event['payload']['ref_type'] == 'repository':
-        logLines.append(f"{get_prefix(event)} - {event['payload']['ref_type']} {event['repo']['name']}")
+    if event["payload"]["ref_type"] == "repository":
+        logLines.append(
+            f"{get_prefix(event)} - {event['payload']['ref_type']} {event['repo']['name']}"
+        )
     else:
-        logLines.append(f"{get_prefix(event)} - {event['payload']['ref_type']} {event['payload']['ref'] or ''}")
+        logLines.append(
+            f"{get_prefix(event)} - {event['payload']['ref_type']} {event['payload']['ref'] or ''}"
+        )
+
 
 def pull_request_review_comment_formatter(logLines, event):
-    logLines.append(f"{get_prefix(event)} - on PR {event['payload']['pull_request']['title']}")
+    logLines.append(
+        f"{get_prefix(event)} - on PR {event['payload']['pull_request']['title']}"
+    )
+
 
 def pull_request_review_formatter(logLines, event):
-    logLines.append(f"{get_prefix(event)} - on PR {event['payload']['pull_request']['title']}")
+    logLines.append(
+        f"{get_prefix(event)} - on PR {event['payload']['pull_request']['title']}"
+    )
+
 
 def issue_comment_formatter(logLines, event):
-    logLines.append(f"{get_prefix(event)} - on Issue {event['payload']['issue']['title']}")
+    logLines.append(
+        f"{get_prefix(event)} - on Issue {event['payload']['issue']['title']}"
+    )
+
 
 def default_formatter(logLines, event):
     logLines.append(f"{get_prefix(event)} - {event['payload']}")
+
 
 def activity_formatter(logLines, event):
     switcher = {
@@ -105,52 +136,63 @@ def activity_formatter(logLines, event):
         "PullRequestReviewCommentEvent": pull_request_review_comment_formatter,
         "IssueCommentEvent": issue_comment_formatter,
     }
-    return switcher.get(event['type'], default_formatter)(logLines, event)
+    return switcher.get(event["type"], default_formatter)(logLines, event)
 
 
 def get_github_activity(github_token, username, target_date, events_filter):
     gh = GitHubAPI(github_token)
     logLines = []
     for event in gh.get_user_events_date(username, target_date, events_filter):
-        actor = event['actor']['login']
+        actor = event["actor"]["login"]
         if actor == username:
             activity_formatter(logLines, event)
     return logLines
+
 
 def print_activity(logLines):
     for line in logLines:
         print(line)
 
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Fetch GitHub log for a specific user on a given date',
+        description="Fetch GitHub log for a specific user on a given date",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    
-    parser.add_argument('-u', '--user', 
-                        required=True,
-                        help='GitHub username to fetch activity for')
-    
-    parser.add_argument('-d', '--date',
-                        default=datetime.now().date().strftime('%Y-%m-%d'),
-                        help='Date to fetch activity for (YYYY-MM-DD format, defaults to today)')
-    
-    parser.add_argument('-t', '--token',
-                        help='GitHub API token (can also be set via GITHUB_TOKEN environment variable)')
 
-    parser.add_argument('-e', '--events',
-                        default='',
-                        help='Comma-separated list of events to include in the log')
+    parser.add_argument(
+        "-u", "--user", required=True, help="GitHub username to fetch activity for"
+    )
+
+    parser.add_argument(
+        "-d",
+        "--date",
+        default=datetime.now().date().strftime("%Y-%m-%d"),
+        help="Date to fetch activity for (YYYY-MM-DD format, defaults to today)",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--token",
+        help="GitHub API token (can also be set via GITHUB_TOKEN environment variable)",
+    )
+
+    parser.add_argument(
+        "-e",
+        "--events",
+        default="",
+        help="Comma-separated list of events to include in the log",
+    )
 
     args = parser.parse_args()
-    token = args.token or os.getenv('GITHUB_TOKEN')
+    token = args.token or os.getenv("GITHUB_TOKEN")
     if not token:
         print("Please set GITHUB_TOKEN environment variable")
         exit(1)
 
-    if re.match(r'^\d{4}-\d{2}-\d{2}$', args.date):
-        target_date = datetime.strptime(args.date, '%Y-%m-%d').date()
-    elif re.match(r'^-?\d+$', args.date):
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
+        target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+    elif re.match(r"^-?\d+$", args.date):
         target_date = datetime.now().date() + timedelta(days=int(args.date))
 
     try:
