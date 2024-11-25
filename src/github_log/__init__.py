@@ -22,7 +22,7 @@ class GitHubAPI:
         response.raise_for_status()
         return response.json()
     
-    def get_user_events_date(self, username, local_date):
+    def get_user_events_date(self, username, local_date, events_filter):
         page = 1
         fetch_more = True
 
@@ -31,9 +31,13 @@ class GitHubAPI:
         start_dt = datetime.combine(local_date, datetime.min.time()).replace(tzinfo=local_tz)
         end_dt = datetime.combine(local_date, datetime.max.time()).replace(tzinfo=local_tz)
 
+        events_filter = [e.lower() for e in events_filter.split(',') if e != '']
+
         while fetch_more:
             events = self.get_user_events(username, page)
             for event in events:
+                if events_filter and event['type'].lower() not in events_filter and event['type'].replace('Event', '').lower() not in events_filter:
+                    continue
                 event_dt = datetime.strptime(
                     event['created_at'], 
                     '%Y-%m-%dT%H:%M:%SZ'
@@ -104,10 +108,10 @@ def activity_formatter(logLines, event):
     return switcher.get(event['type'], default_formatter)(logLines, event)
 
 
-def get_github_activity(github_token, username, target_date):
+def get_github_activity(github_token, username, target_date, events_filter):
     gh = GitHubAPI(github_token)
     logLines = []
-    for event in gh.get_user_events_date(username, target_date):
+    for event in gh.get_user_events_date(username, target_date, events_filter):
         actor = event['actor']['login']
         if actor == username:
             activity_formatter(logLines, event)
@@ -134,6 +138,10 @@ def main():
     parser.add_argument('-t', '--token',
                         help='GitHub API token (can also be set via GITHUB_TOKEN environment variable)')
 
+    parser.add_argument('-e', '--events',
+                        default='',
+                        help='Comma-separated list of events to include in the log')
+
     args = parser.parse_args()
     token = args.token or os.getenv('GITHUB_TOKEN')
     if not token:
@@ -146,7 +154,7 @@ def main():
         target_date = datetime.now().date() + timedelta(days=int(args.date))
 
     try:
-        activity = get_github_activity(token, args.user, target_date)
+        activity = get_github_activity(token, args.user, target_date, args.events)
         print_activity(activity)
     except requests.exceptions.RequestException as e:
         print(f"Error fetching GitHub log: {e}", file=sys.stderr)
