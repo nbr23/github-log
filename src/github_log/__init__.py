@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import sys
 import requests
 import argparse
+import re
 
 from zoneinfo import ZoneInfo
 
@@ -105,7 +106,6 @@ def activity_formatter(logLines, event):
 
 def get_github_activity(github_token, username, target_date):
     gh = GitHubAPI(github_token)
-    target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
     logLines = []
     for event in gh.get_user_events_date(username, target_date):
         actor = event['actor']['login']
@@ -140,8 +140,13 @@ def main():
         print("Please set GITHUB_TOKEN environment variable")
         exit(1)
 
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', args.date):
+        target_date = datetime.strptime(args.date, '%Y-%m-%d').date()
+    elif re.match(r'^-?\d+$', args.date):
+        target_date = datetime.now().date() + timedelta(days=int(args.date))
+
     try:
-        activity = get_github_activity(token, args.user, args.date)
+        activity = get_github_activity(token, args.user, target_date)
         print_activity(activity)
     except requests.exceptions.RequestException as e:
         print(f"Error fetching GitHub log: {e}", file=sys.stderr)
