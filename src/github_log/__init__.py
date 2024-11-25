@@ -73,7 +73,10 @@ def pull_request_formatter(logLines, event):
     logLines.append(f"{get_prefix(event)} -{event['payload']['action']} - {event['payload']['pull_request']['title']}")
 
 def create_formatter(logLines, event):
-    logLines.append(f"{get_prefix(event)} - {event['payload']['ref_type']} {event['payload']['ref'] or ''}")
+    if event['payload']['ref_type'] == 'repository':
+        logLines.append(f"{get_prefix(event)} - {event['payload']['ref_type']} {event['repo']['name']}")
+    else:
+        logLines.append(f"{get_prefix(event)} - {event['payload']['ref_type']} {event['payload']['ref'] or ''}")
 
 def pull_request_review_comment_formatter(logLines, event):
     logLines.append(f"{get_prefix(event)} - on PR {event['payload']['pull_request']['title']}")
