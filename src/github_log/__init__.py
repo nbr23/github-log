@@ -9,19 +9,30 @@ from zoneinfo import ZoneInfo
 
 
 class GitHubAPI:
-    def __init__(self, access_token):
+    def __init__(self, access_token, orgs=""):
         self.access_token = access_token
         self.headers = {
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/vnd.github.v3+json",
         }
         self.current_user = self.get_current_user().get("login")
+        if orgs == "":
+            self.orgs = []
+        else:
+            self.orgs = [o for o in orgs.split(",") if o != ""]
+        self.emails = self.get_current_user_emails()
 
     def get_current_user(self):
         url = "https://api.github.com/user"
         response = requests.get(url, headers=self.headers)
         response.raise_for_status()
         return response.json()
+
+    def get_current_user_emails(self):
+        url = "https://api.github.com/user/emails"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return [e["email"] for e in response.json()]
 
     def get_user_events(self, page=1):
         url = f"https://api.github.com/users/{self.current_user}/events"
@@ -30,10 +41,20 @@ class GitHubAPI:
         response.raise_for_status()
         return response.json()
 
-    def get_user_events_date(self, local_date, events_filter):
-        page = 1
-        fetch_more = True
+    def get_org_events(self, org, page=1):
+        url = f"https://api.github.com/users/{self.current_user}/events/orgs/{org}"
+        params = {"page": page}
+        response = requests.get(url, headers=self.headers, params=params)
+        response.raise_for_status()
+        return response.json()
 
+    def get_orgs(self):
+        url = f"https://api.github.com/user/orgs"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_events_date(self, local_date, events_filter):
         local_tz = datetime.now().astimezone().tzinfo
         start_dt = datetime.combine(local_date, datetime.min.time()).replace(
             tzinfo=local_tz
@@ -44,8 +65,28 @@ class GitHubAPI:
 
         events_filter = [e.lower() for e in events_filter.split(",") if e != ""]
 
+        yield from self.get_method_events_date(
+            local_tz, start_dt, end_dt, events_filter, self.get_user_events
+        )
+        for org in self.orgs:
+            yield from self.get_method_events_date(
+                local_tz,
+                start_dt,
+                end_dt,
+                events_filter,
+                lambda page: self.get_org_events(org, page),
+            )
+
+    def get_method_events_date(self, local_tz, start_dt, end_dt, events_filter, method):
+        page = 1
+        fetch_more = True
+
         while fetch_more:
-            events = self.get_user_events(page)
+            try:
+                events = method(page)
+            except requests.exceptions.RequestException as e:
+                print(f"Error fetching GitHub log: {e}", file=sys.stderr)
+                break
             for event in events:
                 if (
                     events_filter
@@ -53,6 +94,15 @@ class GitHubAPI:
                     and event["type"].replace("Event", "").lower() not in events_filter
                 ):
                     continue
+
+                logins = []
+                emails = []
+                find_user_logins(logins, emails, event)
+                if self.current_user not in logins and not set(
+                    self.emails
+                ).intersection(emails):
+                    continue
+
                 event_dt = (
                     datetime.strptime(event["created_at"], "%Y-%m-%dT%H:%M:%SZ")
                     .replace(tzinfo=ZoneInfo("UTC"))
@@ -65,6 +115,21 @@ class GitHubAPI:
                 if start_dt <= event_dt <= end_dt:
                     yield event
             page += 1
+
+
+def find_user_logins(logins, emails, event):
+    if not isinstance(event, dict):
+        return
+    for k, v in event.items():
+        if k == "login":
+            logins.append(v)
+        if k == "email":
+            emails.append(v)
+        elif isinstance(v, dict):
+            find_user_logins(logins, emails, v)
+        elif isinstance(v, list):
+            for item in v:
+                find_user_logins(logins, emails, item)
 
 
 def get_pretty_event_type(event):
@@ -146,13 +211,10 @@ def activity_formatter(logLines, event):
     return switcher.get(event["type"], default_formatter)(logLines, event)
 
 
-def get_github_activity(github_token, username, target_date, events_filter):
-    gh = GitHubAPI(github_token)
+def get_github_activity(gh, target_date, events_filter):
     logLines = []
-    for event in gh.get_user_events_date(target_date, events_filter):
-        actor = event["actor"]["login"]
-        if actor == username:
-            activity_formatter(logLines, event)
+    for event in gh.get_events_date(target_date, events_filter):
+        activity_formatter(logLines, event)
     return logLines
 
 
@@ -191,6 +253,13 @@ def main():
         help="Comma-separated list of events to include in the log",
     )
 
+    parser.add_argument(
+        "-o",
+        "--orgs",
+        default="",
+        help="Comma-separated list of organizations to include in the log",
+    )
+
     args = parser.parse_args()
     token = args.token or os.getenv("GITHUB_TOKEN")
     if not token:
@@ -203,7 +272,8 @@ def main():
         target_date = datetime.now().date() + timedelta(days=int(args.date))
 
     try:
-        activity = get_github_activity(token, args.user, target_date, args.events)
+        gh = GitHubAPI(token, args.orgs)
+        activity = get_github_activity(gh, target_date, args.events)
         print_activity(activity)
     except requests.exceptions.RequestException as e:
         print(f"Error fetching GitHub log: {e}", file=sys.stderr)
