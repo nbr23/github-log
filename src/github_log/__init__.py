@@ -15,15 +15,22 @@ class GitHubAPI:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/vnd.github.v3+json",
         }
+        self.current_user = self.get_current_user().get("login")
 
-    def get_user_events(self, username, page=1):
-        url = f"https://api.github.com/users/{username}/events"
+    def get_current_user(self):
+        url = "https://api.github.com/user"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+    def get_user_events(self, page=1):
+        url = f"https://api.github.com/users/{self.current_user}/events"
         params = {"page": page}
         response = requests.get(url, headers=self.headers, params=params)
         response.raise_for_status()
         return response.json()
 
-    def get_user_events_date(self, username, local_date, events_filter):
+    def get_user_events_date(self, local_date, events_filter):
         page = 1
         fetch_more = True
 
@@ -38,7 +45,7 @@ class GitHubAPI:
         events_filter = [e.lower() for e in events_filter.split(",") if e != ""]
 
         while fetch_more:
-            events = self.get_user_events(username, page)
+            events = self.get_user_events(page)
             for event in events:
                 if (
                     events_filter
@@ -142,7 +149,7 @@ def activity_formatter(logLines, event):
 def get_github_activity(github_token, username, target_date, events_filter):
     gh = GitHubAPI(github_token)
     logLines = []
-    for event in gh.get_user_events_date(username, target_date, events_filter):
+    for event in gh.get_user_events_date(target_date, events_filter):
         actor = event["actor"]["login"]
         if actor == username:
             activity_formatter(logLines, event)
