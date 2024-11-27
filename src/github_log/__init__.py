@@ -49,7 +49,7 @@ class GitHubAPI:
         return response.json()
 
     def get_orgs(self):
-        url = f"https://api.github.com/user/orgs"
+        url = "https://api.github.com/user/orgs"
         response = requests.get(url, headers=self.headers)
         response.raise_for_status()
         return response.json()
